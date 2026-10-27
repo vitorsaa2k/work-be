@@ -1,13 +1,15 @@
 # Work Backend
 
-Backend foundation for **Work**, a local small-gig marketplace. Users will be able to publish
-jobs, apply to jobs, select one worker, and coordinate the work.
+Backend foundation for **Work**, a local small-gig marketplace. Users can publish jobs, apply to
+jobs, select one worker, and coordinate the work.
 
-This milestone provides the foundation and account lifecycle: validated configuration, Hono HTTP
-infrastructure, PostgreSQL/Prisma, the initial domain schema, migrations, a development seed, public
-gig discovery, self-service registration, secure server-side cookie sessions, email verification,
-password reset, and authentication throttling. Gig creation, applications, worker selection,
-messaging, reviews, and moderation are not implemented yet.
+This milestone provides the foundation, account lifecycle, and the P0 marketplace write flow:
+validated configuration, Hono HTTP infrastructure, PostgreSQL/Prisma, the initial domain schema,
+migrations, a development seed, public gig discovery, self-service registration, secure server-side
+cookie sessions, email verification, password reset, authentication throttling, gig draft/publish/
+edit/cancel flows, applications, transactional worker selection, agreement start/completion/
+cancellation, private address access, and automatic expiry maintenance. Messaging, notifications,
+reviews, disputes, payments, and moderation are not implemented yet.
 
 ## Stack
 
@@ -42,9 +44,12 @@ src/
   lib/                   Errors, password hashing, error mapping, and structured logging
   middleware/            Request IDs, logs, CSRF checks, error handler, not-found handler
   modules/
+    applications/        Worker applications, listing, and withdrawal
+    agreements/          Worker selection, start/completion, cancellation, and address access
     auth/                Registration, sessions, verification/reset tokens, mail, and throttling
+    gigs/                Gig discovery, write flows, lifecycle predicates, schemas, and routes
     health/              Liveness/readiness service and routes
-    gigs/                Public gig schemas, service, and routes
+    maintenance/         Expiry and credential cleanup service and scheduler
   routes/index.ts        Versioned API route composition
 tests/
   unit/                  Pure validation, mapping, and logging tests
@@ -268,10 +273,11 @@ expires after 30 days. The raw 256-bit token is never stored in PostgreSQL: only
 persisted.
 
 Registration creates an `ACTIVE` account, logs it in immediately by setting the same session cookie,
-and sends an email verification link. `emailVerified` reports whether ownership has been confirmed;
-the current API allows unverified accounts to authenticate, but future write endpoints should require
-a verified email. Browser clients calling the API cross-origin must use `credentials: 'include'`;
-CORS allows only `FRONTEND_ORIGIN` with credentials.
+and sends an email verification link. `emailVerified` reports whether ownership has been confirmed.
+Unverified accounts may still authenticate and read public data, but every marketplace write endpoint
+requires a verified email and returns `403 EMAIL_NOT_VERIFIED` otherwise. Browser clients calling the
+API cross-origin must use `credentials: 'include'`; CORS allows only `FRONTEND_ORIGIN` with
+credentials.
 
 Email verification and password reset use random 256-bit tokens. Only SHA-256 token hashes are stored;
 tokens are single-use, invalidated by reissue, and expire after 24 hours for verification or 30
@@ -290,8 +296,8 @@ are not shared between processes and reset when the server restarts.
 
 Unsafe HTTP methods are checked for CSRF: a present `Origin` must exactly equal `FRONTEND_ORIGIN`,
 and `Sec-Fetch-Site: cross-site` is rejected. Non-browser clients may omit both headers. This check
-applies to registration, login, logout, email verification, password reset, and future write
-endpoints.
+applies to registration, login, logout, email verification, password reset, and every marketplace
+write endpoint.
 
 #### `POST /api/v1/auth/register`
 
@@ -456,8 +462,9 @@ password.
 
 ### `GET /api/v1/gigs`
 
-Returns publicly discoverable gigs. Only `OPEN` gigs are public in this milestone. Page size defaults
-to 20 and is capped at 50.
+Returns publicly discoverable gigs. Only `OPEN` gigs are public, and gigs are hidden once they are
+more than 24 hours past `scheduledAt` (or once maintenance marks them `EXPIRED`). Legacy `OPEN` gigs
+with a null `scheduledAt` remain visible and do not expire. Page size defaults to 20 and is capped at 50.
 
 Query parameters:
 
@@ -521,6 +528,144 @@ detail response includes `GigAddress`, street, number, complement, access instru
 email, password hashes, or internal database fields. Prisma queries use explicit selects and the API
 returns explicit DTOs.
 
+### Marketplace writes
+
+All marketplace write endpoints require an authenticated session with a verified email. A valid
+session without a verified email receives `403 EMAIL_NOT_VERIFIED`. Ownership checks return `404` for
+resources the caller cannot see, so private IDs are not disclosed.
+
+Gig lifecycle:
+
+```text
+DRAFT -> OPEN -> ASSIGNED -> IN_PROGRESS -> COMPLETED
+  |       |          |
+  +-------+----------+-> CANCELED
+
+OPEN -> EXPIRED (maintenance or lazy expiry after the 24-hour grace period)
+```
+
+- `DRAFT`: owner-only, editable, not publicly discoverable, no applications.
+- `OPEN`: publicly discoverable until 24 hours after `scheduledAt`; accepts applications.
+- `ASSIGNED`: one worker selected; agreement exists.
+- `IN_PROGRESS`: both parties confirmed the start.
+- `COMPLETED`: both parties confirmed completion.
+- `CANCELED`: terminal; set by employer cancellation before selection or agreement cancellation
+  before the start is confirmed.
+- `EXPIRED`: terminal; set by maintenance for stale `OPEN` gigs. Pending applications are rejected.
+
+Publishing requires `scheduledAt` in the future. Drafts may be unscheduled. New API-created gigs
+cannot be published without a schedule, but legacy/test `OPEN` gigs with null `scheduledAt` remain
+visible and never expire. A gig's address is retained after cancellation.
+
+#### `POST /api/v1/gigs`
+
+Creates a gig owned by the authenticated user. The body is the same shape used by
+`PATCH /api/v1/gigs/:gigId`:
+
+```json
+{
+  "title": "Ajuda para montar uma estante",
+  "description": "Preciso de ajuda para montar uma estante de sala com ferramentas simples.",
+  "category": "Montagem de moveis",
+  "price": {
+    "amount": 18000,
+    "currency": "BRL"
+  },
+  "estimatedDurationMinutes": 120,
+  "scheduledAt": "2026-10-29T12:00:00.000Z",
+  "city": "Sao Paulo",
+  "location": "Vila Mariana",
+  "type": "PERSONAL",
+  "address": {
+    "street": "Rua Privada",
+    "number": "123",
+    "complement": "Apto 42",
+    "accessInstructions": "Usar o portao lateral."
+  },
+  "publish": true
+}
+```
+
+`publish` defaults to `false`, creating a `DRAFT`. When `publish` is `true`, `scheduledAt` is required
+and must be in the future. `address` is required. The response is `201` with the owner gig detail,
+including `applicationCount`, `agreementId`, cancellation/expiry metadata, and the private address.
+Public gig reads never include the address.
+
+#### `GET /api/v1/gigs/mine`
+
+Returns the authenticated user's gigs, including drafts and terminal states. Supports `page`,
+`limit`, and an optional `status` filter (`DRAFT`, `OPEN`, `ASSIGNED`, `IN_PROGRESS`, `COMPLETED`,
+`CANCELED`, `EXPIRED`). Results use the owner summary shape and pagination metadata.
+
+#### `GET /api/v1/gigs/:gigId/private`
+
+Returns the owner gig detail for one gig, including the private address. Non-owners receive `404`.
+
+#### `PATCH /api/v1/gigs/:gigId`
+
+Replaces the editable fields of a `DRAFT` gig. Only the owner may edit, and only `DRAFT` gigs are
+editable. Publishing uses the same rules as creation. Editing an `OPEN` or terminal gig returns
+`409 INVALID_GIG_STATE`.
+
+#### `POST /api/v1/gigs/:gigId/cancel`
+
+Cancels a `DRAFT` or `OPEN` gig owned by the caller before selection. The optional body is
+`{ "reason": "..." }`. The gig becomes `CANCELED`, pending applications are rejected, and the private
+address is retained for existing authorized access. Canceling an assigned or terminal gig returns
+`409 INVALID_GIG_STATE`.
+
+#### Applications
+
+- `POST /api/v1/gigs/:gigId/applications` applies to an active `OPEN` gig. The optional body is
+  `{ "message": "..." }`. Employers cannot apply to their own gigs, duplicate applications return
+  `409 ALREADY_APPLIED`, and expired or non-open gigs return `409 GIG_EXPIRED` or `409 GIG_NOT_OPEN`.
+- `GET /api/v1/gigs/:gigId/applications` is owner-only and returns
+  `{ "gig": {...}, "applications": [...] }` with applicant profiles and statuses.
+- `GET /api/v1/applications/me` returns the caller's applications with the gig summary,
+  `agreementId`, and `agreementStatus`.
+- `POST /api/v1/applications/:applicationId/withdraw` withdraws a `PENDING` application. Withdrawing
+  any other status returns `409 APPLICATION_NOT_PENDING`. A withdrawn applicant may apply again
+  while the gig remains open.
+
+#### `POST /api/v1/gigs/:gigId/select-worker`
+
+Owner-only transactional selection. The body is `{ "applicationId": "<uuid>" }`. The service locks
+the gig row with `SELECT ... FOR UPDATE`, requires the gig to be `OPEN` and not expired, requires a
+`PENDING` application for that gig, marks that application `ACCEPTED`, rejects the other pending
+applications, changes the gig to `ASSIGNED`, and creates one agreement snapshotting the agreed price
+and currency. The response is `201` with the agreement. A second selection returns `409`.
+
+#### Agreements
+
+Agreements are visible only to their employer and worker. The response includes the agreement
+lifecycle timestamps, participant names, a `viewerRole` (`EMPLOYER` or `WORKER`), and the gig summary.
+
+- `GET /api/v1/agreements/:agreementId` returns the agreement.
+- `GET /api/v1/agreements/:agreementId/address` returns the private address to either participant,
+  including after cancellation.
+- `POST /api/v1/agreements/:agreementId/start` records the caller's start confirmation. The first
+  confirmation keeps the agreement `ASSIGNED`; the second moves it and the gig to `IN_PROGRESS` and
+  sets `startedAt`. Confirming after both parties started is idempotent.
+- `POST /api/v1/agreements/:agreementId/confirm-completion` records the caller's completion
+  confirmation. It requires the agreement to be `IN_PROGRESS`; the first confirmation keeps it
+  `IN_PROGRESS`, and the second sets `COMPLETED` on the agreement and gig.
+- `POST /api/v1/agreements/:agreementId/cancel` cancels before the start is fully confirmed. Either
+  participant may cancel. The optional body is `{ "reason": "..." }`. Cancellation sets the agreement
+  and gig to `CANCELED` and records `canceledById`. It is not allowed after `startedAt` or in a
+  terminal state.
+
+#### Maintenance
+
+Maintenance runs once at startup and every 60 seconds. Each run:
+
+- Marks `OPEN` gigs whose `scheduledAt` is at least 24 hours in the past as `EXPIRED`, setting
+  `expiredAt`, and rejects their pending applications.
+- Deletes expired sessions and expired authentication tokens.
+
+The service is idempotent. Public gig reads also apply the expiry cutoff lazily, so stale gigs
+disappear even before the next maintenance run. Applying to a stale-but-not-yet-marked gig returns
+`409 GIG_EXPIRED`.
+
 ## Error format
 
 All application and not-found errors use one shape:
@@ -549,6 +694,14 @@ All application and not-found errors use one shape:
 - `NOT_FOUND` — `404`.
 - `CONFLICT` — `409`.
 - `EMAIL_ALREADY_REGISTERED` — `409`, for a duplicate account email.
+- `EMAIL_NOT_VERIFIED` — `403`, for marketplace writes from unverified accounts.
+- `CANNOT_APPLY_TO_OWN_GIG` — `403`, when an employer applies to their own gig.
+- `ALREADY_APPLIED` — `409`, when the caller already has an application for the gig.
+- `APPLICATION_NOT_PENDING` — `409`, when withdrawing a non-pending application.
+- `GIG_NOT_OPEN` — `409`, when applying to or selecting from a non-open gig.
+- `GIG_EXPIRED` — `409`, when a stale gig is still marked `OPEN`.
+- `INVALID_GIG_STATE` — `409`, for disallowed gig transitions or editing a non-draft.
+- `INVALID_AGREEMENT_STATE` — `409`, for disallowed start, completion, or cancellation.
 - `INVALID_TOKEN` — `400`, for an invalid, expired, used, or wrong-purpose action token.
 - `TOO_MANY_ATTEMPTS` — `429`, with a `Retry-After` header.
 - `SERVICE_UNAVAILABLE` — `503`.
@@ -592,7 +745,16 @@ otherwise the server generates a UUID. The ID is included in error bodies and st
   a substitute for SMTP in production. Email tokens are placed in frontend URLs; those pages should
   use a restrictive `Referrer-Policy` and avoid third-party resources before the token is consumed.
 - Public gig address data is stored separately in `GigAddress` and is never selected by public gig
-  queries.
+  queries. Address data is returned only through owner and agreement-participant endpoints, including
+  after cancellation.
+- Every marketplace write requires a verified email. Ownership and participation checks return the
+  same `404` used for missing resources, so private IDs are not disclosed.
+- Worker selection locks the gig row, revalidates the application and gig state inside the
+  transaction, rejects competing applications, and creates one agreement with a price snapshot.
+- Agreement start and completion require both participants; state changes and idempotent replays are
+  performed under a row lock. Cancellation is allowed only before the start is fully confirmed.
+- Stale `OPEN` gigs are hidden and rejected lazily by the 24-hour expiry cutoff, then finalized by
+  idempotent maintenance that also cleans expired sessions and action tokens.
 - Public responses use explicit DTOs rather than serializing Prisma models.
 - Request bodies and query parameters are validated with Zod; frontend validation is not trusted.
 - Structured logs redact PostgreSQL URLs, passwords, secrets, tokens, authorization headers, and
@@ -617,21 +779,23 @@ otherwise the server generates a UUID. The ID is included in error bodies and st
   until verification succeeds; existing accounts were grandfathered as verified by the migration.
 - User emails are normalized to lowercase by migration and protected by both the original unique
   constraint and a case-insensitive unique index.
-- The initial model is one agreement per gig (`Agreement.gigId` is unique). Worker selection should
-  later be transactional and snapshot the agreed price/currency.
-- An application is unique per gig and applicant. Preventing an employer from applying to their own
-  gig is a business rule for the future application service; it is not expressible as a simple
-  Prisma schema constraint.
+- The model is one agreement per gig (`Agreement.gigId` is unique). Worker selection is transactional
+  and snapshots the agreed price/currency.
+- An application is unique per gig and applicant. The application service rejects an employer
+  applying to their own gig; this is a business rule rather than a simple schema constraint.
+- Gig cancellation requires both `canceledAt` and `canceledById`, `expiredAt` requires `EXPIRED`
+  status, and agreement start/completion timestamps have database consistency checks. `OPEN` gigs
+  are indexed by `(status, scheduledAt)` for expiry scans.
 
 ## Known limitations
 
-- Email verification is not enforced yet. Unverified accounts can log in, and no protected business
-  write endpoints exist where it could be required.
+- Marketplace writes require a verified email, but unverified accounts can still log in, browse
+  public gigs, and manage their own authentication state.
 - The default file mailer does not deliver email. Production must configure SMTP or replace the
   mailer with another provider. Delivery failures are logged without message contents or tokens and
   do not fail registration.
 - No MFA, account lockout, breached-password screening, email change, or account deletion. Anyone can
-  still register an address they do not control and use the account until verification is enforced.
+  still register an address they do not control and browse until they attempt a marketplace write.
 - Login, registration, and recovery rate-limit state is held in process memory. It resets on restart
   and is not shared across multiple instances; a horizontally scaled deployment needs a shared store.
 - Registration returns `EMAIL_ALREADY_REGISTERED`, which allows callers to check whether an address
@@ -640,12 +804,16 @@ otherwise the server generates a UUID. The ID is included in error bodies and st
   window expires after 15 minutes, but a distributed attacker can keep it active. Reset/verification
   request limits can similarly delay legitimate retries.
 - Authentication is cookie-only; no bearer-token or mobile-client flow exists.
-- No role model or protected business endpoints yet.
-- No gig creation/editing, applications, worker selection, agreements, messaging, notifications,
-  reviews, or moderation endpoints.
+- No admin, support, or moderation roles and no moderation endpoints.
+- No messaging, notifications, reviews, dispute resolution, payments, file uploads, or realtime
+  updates. The `DISPUTED` agreement status exists in the schema but has no transition endpoint.
 - Sessions use a fixed 30-day absolute lifetime with no sliding renewal, device listing,
-  revoke-all-sessions UI, or per-user active-session cap. Expired rows are cleaned up
+  revoke-all-sessions UI, or per-user active-session cap. Expired rows are cleaned by maintenance and
   opportunistically on login.
+- The maintenance scheduler runs inside each API process. Its operations are idempotent, but multiple
+  instances can perform overlapping scans; there is no distributed lock or job queue.
+- Gig writes are full replacements; there is no partial patch or optimistic-concurrency version field.
+  Two owner edits can overwrite each other.
 - Account status changes immediately block session use, but future account-management flows should
   also proactively delete existing session rows.
 - `SameSite=Lax` assumes frontend and API are deployed on the same site. A cross-site deployment
@@ -659,8 +827,9 @@ otherwise the server generates a UUID. The ID is included in error bodies and st
 ## Next milestone
 
 1. Account management (email/password changes) and session/device controls.
-2. Gig creation and editing for authenticated employers, requiring verified email.
-3. Applications for authenticated workers.
-4. Transactional worker selection and agreement creation.
+2. Notifications and messaging between agreement participants.
+3. Reviews after completion, reporting, moderation, and dispute handling.
+4. Payments or escrow, if the product requires them.
 
-Do not expose additional write or protected operations without explicit ownership authorization.
+Do not expose additional write or protected operations without explicit ownership or participation
+authorization.

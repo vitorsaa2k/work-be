@@ -44,6 +44,10 @@ export interface CreateGigOptions {
   location?: string
   type?: 'PERSONAL' | 'BUSINESS'
   status?: 'DRAFT' | 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELED' | 'EXPIRED'
+  canceledAt?: Date | null
+  canceledById?: string | null
+  cancellationReason?: string | null
+  expiredAt?: Date | null
   createdAt?: Date
   address?: {
     street?: string
@@ -71,6 +75,10 @@ export async function createGig(
       location: options.location ?? 'Centro',
       type: options.type ?? 'PERSONAL',
       status: options.status ?? 'OPEN',
+      canceledAt: options.canceledAt ?? null,
+      canceledById: options.canceledById ?? null,
+      cancellationReason: options.cancellationReason ?? null,
+      expiredAt: options.expiredAt ?? null,
       ...(options.createdAt ? { createdAt: options.createdAt } : {}),
       ...(options.address
         ? {
@@ -89,6 +97,76 @@ export async function createGig(
     select: {
       id: true,
       title: true,
+    },
+  })
+}
+
+export interface CreateApplicationOptions {
+  gigId: string
+  applicantId: string
+  message?: string | null
+  status?: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'WITHDRAWN'
+}
+
+export async function createApplication(
+  prisma: DatabaseClient,
+  options: CreateApplicationOptions,
+): Promise<{ id: string }> {
+  return prisma.application.create({
+    data: {
+      gigId: options.gigId,
+      applicantId: options.applicantId,
+      message: options.message ?? null,
+      status: options.status ?? 'PENDING',
+    },
+    select: {
+      id: true,
+    },
+  })
+}
+
+export interface CreateAgreementOptions {
+  gigId: string
+  employerId: string
+  workerId: string
+  agreedPriceAmount?: number
+  currency?: string
+  status?: 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELED' | 'DISPUTED'
+  employerStartedAt?: Date | null
+  workerStartedAt?: Date | null
+  startedAt?: Date | null
+  employerCompletedAt?: Date | null
+  workerCompletedAt?: Date | null
+  completedAt?: Date | null
+  canceledAt?: Date | null
+  canceledById?: string | null
+  cancellationReason?: string | null
+}
+
+export async function createAgreement(
+  prisma: DatabaseClient,
+  options: CreateAgreementOptions,
+): Promise<{ id: string }> {
+  return prisma.agreement.create({
+    data: {
+      gigId: options.gigId,
+      employerId: options.employerId,
+      workerId: options.workerId,
+      agreedPriceAmount: options.agreedPriceAmount ?? 15_000,
+      currency: options.currency ?? 'BRL',
+      status: options.status ?? 'ASSIGNED',
+      employerStartedAt: options.employerStartedAt ?? null,
+      workerStartedAt: options.workerStartedAt ?? null,
+      startedAt: options.startedAt ?? null,
+      employerCompletedAt: options.employerCompletedAt ?? null,
+      workerCompletedAt: options.workerCompletedAt ?? null,
+      completedAt: options.completedAt ?? null,
+      canceledAt: options.canceledAt ?? null,
+      canceledById: options.canceledById ?? null,
+      cancellationReason: options.cancellationReason ?? null,
+    },
+    select: {
+      id: true,
     },
   })
 }

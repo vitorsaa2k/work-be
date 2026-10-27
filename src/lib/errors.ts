@@ -9,6 +9,14 @@ export const ERROR_CODES = {
   NOT_FOUND: 'NOT_FOUND',
   CONFLICT: 'CONFLICT',
   EMAIL_ALREADY_REGISTERED: 'EMAIL_ALREADY_REGISTERED',
+  EMAIL_NOT_VERIFIED: 'EMAIL_NOT_VERIFIED',
+  CANNOT_APPLY_TO_OWN_GIG: 'CANNOT_APPLY_TO_OWN_GIG',
+  ALREADY_APPLIED: 'ALREADY_APPLIED',
+  APPLICATION_NOT_PENDING: 'APPLICATION_NOT_PENDING',
+  GIG_NOT_OPEN: 'GIG_NOT_OPEN',
+  GIG_EXPIRED: 'GIG_EXPIRED',
+  INVALID_GIG_STATE: 'INVALID_GIG_STATE',
+  INVALID_AGREEMENT_STATE: 'INVALID_AGREEMENT_STATE',
   INVALID_TOKEN: 'INVALID_TOKEN',
   TOO_MANY_ATTEMPTS: 'TOO_MANY_ATTEMPTS',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
@@ -88,6 +96,80 @@ export class EmailAlreadyRegisteredError extends AppError {
   ) {
     super(ERROR_CODES.EMAIL_ALREADY_REGISTERED, message, 409, options)
     this.name = 'EmailAlreadyRegisteredError'
+  }
+}
+
+export class EmailNotVerifiedError extends AppError {
+  constructor(
+    message = 'Verify your email address before making marketplace changes.',
+    options: AppErrorOptions = {},
+  ) {
+    super(ERROR_CODES.EMAIL_NOT_VERIFIED, message, 403, options)
+    this.name = 'EmailNotVerifiedError'
+  }
+}
+
+export class CannotApplyToOwnGigError extends AppError {
+  constructor(message = 'You cannot apply to your own gig.', options: AppErrorOptions = {}) {
+    super(ERROR_CODES.CANNOT_APPLY_TO_OWN_GIG, message, 403, options)
+    this.name = 'CannotApplyToOwnGigError'
+  }
+}
+
+export class AlreadyAppliedError extends AppError {
+  constructor(
+    message = 'You already have an application for this gig.',
+    options: AppErrorOptions = {},
+  ) {
+    super(ERROR_CODES.ALREADY_APPLIED, message, 409, options)
+    this.name = 'AlreadyAppliedError'
+  }
+}
+
+export class ApplicationNotPendingError extends AppError {
+  constructor(
+    message = 'Only pending applications can be withdrawn.',
+    options: AppErrorOptions = {},
+  ) {
+    super(ERROR_CODES.APPLICATION_NOT_PENDING, message, 409, options)
+    this.name = 'ApplicationNotPendingError'
+  }
+}
+
+export class GigNotOpenError extends AppError {
+  constructor(
+    message = 'This gig is no longer accepting applications.',
+    options: AppErrorOptions = {},
+  ) {
+    super(ERROR_CODES.GIG_NOT_OPEN, message, 409, options)
+    this.name = 'GigNotOpenError'
+  }
+}
+
+export class GigExpiredError extends AppError {
+  constructor(message = 'This gig has expired.', options: AppErrorOptions = {}) {
+    super(ERROR_CODES.GIG_EXPIRED, message, 409, options)
+    this.name = 'GigExpiredError'
+  }
+}
+
+export class InvalidGigStateError extends AppError {
+  constructor(
+    message = 'The gig is not in a state that allows this action.',
+    options: AppErrorOptions = {},
+  ) {
+    super(ERROR_CODES.INVALID_GIG_STATE, message, 409, options)
+    this.name = 'InvalidGigStateError'
+  }
+}
+
+export class InvalidAgreementStateError extends AppError {
+  constructor(
+    message = 'The agreement is not in a state that allows this action.',
+    options: AppErrorOptions = {},
+  ) {
+    super(ERROR_CODES.INVALID_AGREEMENT_STATE, message, 409, options)
+    this.name = 'InvalidAgreementStateError'
   }
 }
 

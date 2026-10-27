@@ -2,6 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { createApp } from '../../src/app.js'
 import type { DatabaseClient } from '../../src/db/prisma.js'
+import { createApplicationsService } from '../../src/modules/applications/applications.service.js'
+import { createAgreementsService } from '../../src/modules/agreements/agreements.service.js'
 import { createAuthService } from '../../src/modules/auth/auth.service.js'
 import { createGigsService } from '../../src/modules/gigs/gigs.service.js'
 import { createHealthService } from '../../src/modules/health/health.service.js'
@@ -68,6 +70,8 @@ describe.skipIf(!hasTestDatabase)('public gig API with PostgreSQL', () => {
       logger: silentLogger,
       healthService: createHealthService(async () => client.$queryRaw`SELECT 1`),
       gigsService: createGigsService(client),
+      applicationsService: createApplicationsService(client),
+      agreementsService: createAgreementsService(client),
       authService: createAuthService(client, testAuthConfig, createCapturingAuthMailer()),
     })
   })

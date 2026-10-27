@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { NotFoundError } from '../../src/lib/errors.js'
 import type { GigsService } from '../../src/modules/gigs/gigs.service.js'
-import { createTestApp } from '../helpers/app.js'
+import { createTestApp, defaultGigsService } from '../helpers/app.js'
 
 describe('application infrastructure', () => {
   it('returns a consistent not-found response with a request ID', async () => {
@@ -101,6 +101,7 @@ describe('application infrastructure', () => {
     const listPublicGigs = vi.fn<GigsService['listPublicGigs']>()
     const app = createTestApp({
       gigsService: {
+        ...defaultGigsService,
         listPublicGigs,
         getPublicGig: async () => {
           throw new NotFoundError('Gig not found.')
@@ -123,6 +124,7 @@ describe('application infrastructure', () => {
     const getPublicGig = vi.fn<GigsService['getPublicGig']>()
     const app = createTestApp({
       gigsService: {
+        ...defaultGigsService,
         listPublicGigs: async () => ({
           items: [],
           meta: { page: 1, limit: 20, total: 0, totalPages: 0 },
@@ -158,6 +160,7 @@ describe('application infrastructure', () => {
   it('returns a generic 500 when the gig service fails', async () => {
     const app = createTestApp({
       gigsService: {
+        ...defaultGigsService,
         listPublicGigs: async () => {
           throw new Error('database connection secret')
         },

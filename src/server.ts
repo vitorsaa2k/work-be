@@ -6,11 +6,15 @@ import { createApp } from './app.js'
 import { EnvValidationError, parseEnv, type Env } from './config/env.js'
 import { createPrismaClient } from './db/prisma.js'
 import { createLogger } from './lib/logger.js'
+import { createApplicationsService } from './modules/applications/applications.service.js'
+import { createAgreementsService } from './modules/agreements/agreements.service.js'
 import { createAuthConfig } from './modules/auth/auth.config.js'
 import { createAuthMailer } from './modules/auth/auth-mailer.js'
 import { createAuthService } from './modules/auth/auth.service.js'
 import { createGigsService } from './modules/gigs/gigs.service.js'
 import { createHealthService } from './modules/health/health.service.js'
+import { startMaintenanceScheduler } from './modules/maintenance/maintenance.scheduler.js'
+import { createMaintenanceService } from './modules/maintenance/maintenance.service.js'
 
 function loadEnvironment(): Env {
   try {
@@ -45,6 +49,9 @@ async function main(): Promise<void> {
 
   const healthService = createHealthService(async () => prisma.$queryRaw`SELECT 1`)
   const gigsService = createGigsService(prisma)
+  const applicationsService = createApplicationsService(prisma)
+  const agreementsService = createAgreementsService(prisma)
+  const maintenanceService = createMaintenanceService(prisma)
   const authConfig = createAuthConfig(env.NODE_ENV, env.TRUST_PROXY)
   const authMailer = createAuthMailer(
     {
@@ -71,6 +78,8 @@ async function main(): Promise<void> {
     logger,
     healthService,
     gigsService,
+    applicationsService,
+    agreementsService,
     authService,
   })
 
@@ -93,6 +102,8 @@ async function main(): Promise<void> {
     logger.error('HTTP server error', { error })
   })
 
+  const stopMaintenance = startMaintenanceScheduler(maintenanceService, logger)
+
   let shuttingDown = false
 
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -100,6 +111,7 @@ async function main(): Promise<void> {
       return
     }
     shuttingDown = true
+    stopMaintenance()
     logger.info('Server shutting down', { signal })
 
     const forceExitTimer = setTimeout(() => {

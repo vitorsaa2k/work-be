@@ -8,6 +8,8 @@ import { createErrorHandler } from './middleware/error-handler.js'
 import { notFoundHandler } from './middleware/not-found.js'
 import { createRequestIdMiddleware } from './middleware/request-id.js'
 import { createRequestLoggerMiddleware } from './middleware/request-logger.js'
+import type { ApplicationsService } from './modules/applications/applications.service.js'
+import type { AgreementsService } from './modules/agreements/agreements.service.js'
 import type { AuthConfig } from './modules/auth/auth.config.js'
 import { createAuthRateLimiter, type AuthRateLimiter } from './modules/auth/auth-rate-limiter.js'
 import type { AuthService } from './modules/auth/auth.service.js'
@@ -26,12 +28,22 @@ export interface AppDependencies {
   logger: Logger
   healthService: HealthService
   gigsService: GigsService
+  applicationsService: ApplicationsService
+  agreementsService: AgreementsService
   authService: AuthService
   authRateLimiter?: AuthRateLimiter
 }
 
 export function createApp(dependencies: AppDependencies): Hono<AppEnv> {
-  const { config, logger, healthService, gigsService, authService } = dependencies
+  const {
+    config,
+    logger,
+    healthService,
+    gigsService,
+    applicationsService,
+    agreementsService,
+    authService,
+  } = dependencies
   const authRateLimiter = dependencies.authRateLimiter ?? createAuthRateLimiter()
   const app = new Hono<AppEnv>()
 
@@ -56,6 +68,8 @@ export function createApp(dependencies: AppDependencies): Hono<AppEnv> {
     createApiRoutes({
       healthService,
       gigsService,
+      applicationsService,
+      agreementsService,
       authService,
       authConfig: config.auth,
       authRateLimiter,

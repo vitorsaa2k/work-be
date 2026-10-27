@@ -74,9 +74,11 @@ model User {
 
   profile            Profile?      @relation
   gigs               Gig[]         @relation("GigEmployer")
+  gigsCanceled       Gig[]         @relation("GigCanceledBy")
   applications       Application[]
   employerAgreements Agreement[]   @relation("AgreementEmployer")
   workerAgreements   Agreement[]   @relation("AgreementWorker")
+  agreementsCanceled Agreement[]   @relation("AgreementCanceledBy")
   sessions           Session[]
   authTokens         AuthToken[]
 
@@ -141,16 +143,22 @@ model Gig {
   location                 String    @db.VarChar(120)
   type                     GigType
   status                   GigStatus @default(DRAFT)
+  canceledAt               DateTime? @map("canceled_at") @db.Timestamptz(3)
+  canceledById             String?   @map("canceled_by_id") @db.Uuid
+  cancellationReason       String?   @map("cancellation_reason") @db.VarChar(500)
+  expiredAt                DateTime? @map("expired_at") @db.Timestamptz(3)
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   employer     User          @relation("GigEmployer", fields: [employerId], references: [id], onDelete: Restrict)
+  canceledBy   User?         @relation("GigCanceledBy", fields: [canceledById], references: [id], onDelete: Restrict)
   address      GigAddress?
   applications Application[]
   agreement    Agreement?
 
   @@index([employerId])
   @@index([status, createdAt])
+  @@index([status, scheduledAt])
   @@index([status, city])
   @@index([status, category])
   @@map("gigs")
@@ -195,15 +203,22 @@ model Agreement {
   agreedPriceAmount   Int             @map("agreed_price_amount")
   currency            String          @db.Char(3)
   status              AgreementStatus @default(ASSIGNED)
-  employerConfirmedAt DateTime?       @map("employer_confirmed_at") @db.Timestamptz(3)
-  workerConfirmedAt   DateTime?       @map("worker_confirmed_at") @db.Timestamptz(3)
+  employerStartedAt   DateTime?       @map("employer_started_at") @db.Timestamptz(3)
+  workerStartedAt     DateTime?       @map("worker_started_at") @db.Timestamptz(3)
+  startedAt           DateTime?       @map("started_at") @db.Timestamptz(3)
+  employerCompletedAt DateTime?       @map("employer_completed_at") @db.Timestamptz(3)
+  workerCompletedAt   DateTime?       @map("worker_completed_at") @db.Timestamptz(3)
   completedAt         DateTime?       @map("completed_at") @db.Timestamptz(3)
+  canceledAt          DateTime?       @map("canceled_at") @db.Timestamptz(3)
+  canceledById        String?         @map("canceled_by_id") @db.Uuid
+  cancellationReason  String?         @map("cancellation_reason") @db.VarChar(500)
   createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  gig      Gig  @relation(fields: [gigId], references: [id], onDelete: Restrict)
-  employer User @relation("AgreementEmployer", fields: [employerId], references: [id], onDelete: Restrict)
-  worker   User @relation("AgreementWorker", fields: [workerId], references: [id], onDelete: Restrict)
+  gig        Gig   @relation(fields: [gigId], references: [id], onDelete: Restrict)
+  employer   User  @relation("AgreementEmployer", fields: [employerId], references: [id], onDelete: Restrict)
+  worker     User  @relation("AgreementWorker", fields: [workerId], references: [id], onDelete: Restrict)
+  canceledBy User? @relation("AgreementCanceledBy", fields: [canceledById], references: [id], onDelete: Restrict)
 
   @@index([employerId, status])
   @@index([workerId, status])
