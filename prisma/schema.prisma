@@ -1,0 +1,211 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+
+  @@map("user_status")
+}
+
+enum AuthTokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+
+  @@map("auth_token_purpose")
+}
+
+enum GigType {
+  PERSONAL
+  BUSINESS
+
+  @@map("gig_type")
+}
+
+enum GigStatus {
+  DRAFT
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+  EXPIRED
+
+  @@map("gig_status")
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+
+  @@map("application_status")
+}
+
+enum AgreementStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+  DISPUTED
+
+  @@map("agreement_status")
+}
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  name            String     @db.VarChar(120)
+  email           String     @unique @db.VarChar(320)
+  passwordHash    String?    @map("password_hash") @db.VarChar(255)
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?  @map("email_verified_at") @db.Timestamptz(3)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  profile            Profile?      @relation
+  gigs               Gig[]         @relation("GigEmployer")
+  applications       Application[]
+  employerAgreements Agreement[]   @relation("AgreementEmployer")
+  workerAgreements   Agreement[]   @relation("AgreementWorker")
+  sessions           Session[]
+  authTokens         AuthToken[]
+
+  @@map("users")
+}
+
+model AuthToken {
+  id        String           @id @default(uuid()) @db.Uuid
+  tokenHash String           @unique @map("token_hash") @db.Char(64)
+  userId    String           @map("user_id") @db.Uuid
+  purpose   AuthTokenPurpose
+  expiresAt DateTime         @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime?        @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, purpose], map: "auth_tokens_user_id_purpose_key")
+  @@index([expiresAt])
+  @@map("auth_tokens")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique @map("token_hash") @db.Char(64)
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+model Profile {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  bio       String?  @db.Text
+  imageUrl  String?  @map("image_url") @db.VarChar(2048)
+  city      String   @db.VarChar(120)
+  location  String?  @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Gig {
+  id                       String    @id @default(uuid()) @db.Uuid
+  employerId               String    @map("employer_id") @db.Uuid
+  title                    String    @db.VarChar(200)
+  description              String    @db.Text
+  category                 String    @db.VarChar(80)
+  priceAmount              Int       @map("price_amount")
+  currency                 String    @db.Char(3)
+  estimatedDurationMinutes Int       @map("estimated_duration_minutes")
+  scheduledAt              DateTime? @map("scheduled_at") @db.Timestamptz(3)
+  city                     String    @db.VarChar(120)
+  location                 String    @db.VarChar(120)
+  type                     GigType
+  status                   GigStatus @default(DRAFT)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employer     User          @relation("GigEmployer", fields: [employerId], references: [id], onDelete: Restrict)
+  address      GigAddress?
+  applications Application[]
+  agreement    Agreement?
+
+  @@index([employerId])
+  @@index([status, createdAt])
+  @@index([status, city])
+  @@index([status, category])
+  @@map("gigs")
+}
+
+model GigAddress {
+  id                 String  @id @default(uuid()) @db.Uuid
+  gigId              String  @unique @map("gig_id") @db.Uuid
+  street             String  @db.VarChar(200)
+  number             String  @db.VarChar(20)
+  complement         String? @db.VarChar(120)
+  accessInstructions String? @map("access_instructions") @db.Text
+
+  gig Gig @relation(fields: [gigId], references: [id], onDelete: Cascade)
+
+  @@map("gig_addresses")
+}
+
+model Application {
+  id          String            @id @default(uuid()) @db.Uuid
+  gigId       String            @map("gig_id") @db.Uuid
+  applicantId String            @map("applicant_id") @db.Uuid
+  message     String?           @db.VarChar(2000)
+  status      ApplicationStatus @default(PENDING)
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  gig       Gig  @relation(fields: [gigId], references: [id], onDelete: Cascade)
+  applicant User @relation(fields: [applicantId], references: [id], onDelete: Restrict)
+
+  @@unique([gigId, applicantId], map: "applications_gig_id_applicant_id_key")
+  @@index([applicantId, status])
+  @@index([gigId, status])
+  @@map("applications")
+}
+
+model Agreement {
+  id                  String          @id @default(uuid()) @db.Uuid
+  gigId               String          @unique @map("gig_id") @db.Uuid
+  employerId          String          @map("employer_id") @db.Uuid
+  workerId            String          @map("worker_id") @db.Uuid
+  agreedPriceAmount   Int             @map("agreed_price_amount")
+  currency            String          @db.Char(3)
+  status              AgreementStatus @default(ASSIGNED)
+  employerConfirmedAt DateTime?       @map("employer_confirmed_at") @db.Timestamptz(3)
+  workerConfirmedAt   DateTime?       @map("worker_confirmed_at") @db.Timestamptz(3)
+  completedAt         DateTime?       @map("completed_at") @db.Timestamptz(3)
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  gig      Gig  @relation(fields: [gigId], references: [id], onDelete: Restrict)
+  employer User @relation("AgreementEmployer", fields: [employerId], references: [id], onDelete: Restrict)
+  worker   User @relation("AgreementWorker", fields: [workerId], references: [id], onDelete: Restrict)
+
+  @@index([employerId, status])
+  @@index([workerId, status])
+  @@map("agreements")
+}
